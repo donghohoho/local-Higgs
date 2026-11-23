@@ -41,7 +41,18 @@ def _payload(job):
         "guidance": 5.0,
         "seed": job["seed"],
         "image_b64": image_b64,
+        "speech": _speech(job),
+        "sfx": {"prompt": job["sfx_prompt"] or ""} if job["audio_mode"] == "sfx" else None,
     }
+
+
+def _speech(job):
+    if not job["speech_text"]:
+        return None
+    ref = None
+    if job["voice"] == "clone" and job["voice_ref_path"]:
+        ref = base64.b64encode(Path(job["voice_ref_path"]).read_bytes()).decode()
+    return {"text": job["speech_text"], "voice": job["voice"] or "female", "ref_b64": ref}
 
 
 def _start_batch():
@@ -104,7 +115,8 @@ def _check_batch(batch):
         if r and r.get("status") == "done":
             name = move_output(dest, r["file"])
             if name:
-                db.update_job(j["id"], status="done", output_file=name, gen_seconds=r.get("seconds"))
+                db.update_job(j["id"], status="done", output_file=name, gen_seconds=r.get("seconds"),
+                              error=r.get("warning"))
                 continue
             r = {"error": "결과 파일을 찾지 못함"}
         if log_tail is None and not (r and r.get("error")):

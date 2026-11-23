@@ -24,6 +24,10 @@ app.mount("/outputs", StaticFiles(directory=config.OUTPUT_DIR), name="outputs")
 def _public(job):
     job = dict(job)
     job["has_image"] = bool(job.pop("image_path", None))
+    job.pop("voice_ref_path", None)
+    # a finished job may still carry a warning (e.g. lipsync failed, voice only)
+    job["warning"] = job.pop("error") if job["status"] == "done" else None
+    job["error"] = job.get("error") if job["status"] != "done" else None
     job["video_url"] = f"/outputs/{job['output_file']}" if job.get("output_file") else None
     return job
 
@@ -71,7 +75,12 @@ async def create_job(
     quality: str = Form("standard"),
     seed: int = Form(-1),
     count: int = Form(1),
+    audio_mode: str = Form("none"),
+    sfx_prompt: str = Form(""),
+    speech_text: str = Form(""),
+    voice: str = Form("female"),
     image: UploadFile | None = File(None),
+    voice_ref: UploadFile | None = File(None),
 ):
     if not prompt.strip():
         raise HTTPException(400, "프롬프트를 입력해주세요")
@@ -93,6 +102,29 @@ async def create_job(
         p.write_bytes(data)
         image_path = str(p)
 
+    if audio_mode not in ("none", "sfx"):
+        raise HTTPException(400, "잘못된 오디오 옵션")
+    speech_text = speech_text.strip()
+    if len(speech_text) > 120:
+        raise HTTPException(400, "대사는 120자 이하로 써주세요 (최대 5초)")
+    if voice not in ("female", "male", "clone"):
+        raise HTTPException(400, "잘못된 목소리 옵션")
+    voice_ref_path = None
+    if speech_text and voice == "clone":
+        if voice_ref is None or not voice_ref.filename:
+            raise HTTPException(400, "내 목소리를 쓰려면 3~10초 음성 파일을 올려주세요")
+        data = await voice_ref.read()
+        if len(data) > 5 * 1024 * 1024:
+            raise HTTPException(400, "음성 파일은 5MB 이하만 가능해요")
+        ext = Path(voice_ref.filename).suffix.lower() or ".wav"
+        if ext not in (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm"):
+            raise HTTPException(400, "음성은 wav/mp3/m4a/aac/ogg/flac/webm만 가능해요")
+        p = config.UPLOAD_DIR / f"{db.new_id()}{ext}"
+        p.write_bytes(data)
+        voice_ref_path = str(p)
+    if speech_text:
+        duration = "auto"  # the worker sets the length from the speech (max 5s)
+
     w, h = SIZES[resolution][aspect]
     created = []
     for i in range(count):
@@ -109,10 +141,15 @@ async def create_job(
             "quality": quality,
             "width": w,
             "height": h,
-            "num_frames": DURATIONS[duration],
+            "num_frames": DURATIONS.get(duration, DURATIONS["5"]),
             "steps": QUALITY_STEPS[quality],
             "seed": s,
             "image_path": image_path,
+            "audio_mode": audio_mode,
+            "sfx_prompt": sfx_prompt.strip() or None,
+            "speech_text": speech_text or None,
+            "voice": voice if speech_text else None,
+            "voice_ref_path": voice_ref_path,
         })
         created.append(_public(job))
     scheduler.wake()

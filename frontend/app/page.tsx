@@ -26,7 +26,15 @@ type Job = {
   error: string | null;
   created_at: number;
   progress: { percent: number; eta_s: number; stage: string } | null;
+  warning: string | null;
+  audio_mode: string;
+  speech_text: string | null;
+  voice: string | null;
+  sfx_prompt: string | null;
 };
+type AudioChoice = "none" | "sfx" | "speech" | "both";
+const AUDIO_LABEL: Record<AudioChoice, string> = { none: "없음", sfx: "효과음", speech: "대사", both: "대사+효과음" };
+const VOICE_LABEL: Record<string, string> = { female: "여성", male: "남성", clone: "내 목소리" };
 
 function fmtEta(s: number) {
   if (s <= 0) return "곧 완료";
@@ -82,6 +90,11 @@ export default function Home() {
   const [count, setCount] = useState(1);
   const [seed, setSeed] = useState("");
   const [image, setImage] = useState<File | null>(null);
+  const [audio, setAudio] = useState<AudioChoice>("none");
+  const [speech, setSpeech] = useState("");
+  const [voice, setVoice] = useState("female");
+  const [voiceRef, setVoiceRef] = useState<File | null>(null);
+  const [sfxPrompt, setSfxPrompt] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -129,6 +142,18 @@ export default function Home() {
     fd.append("count", String(count));
     fd.append("seed", seed.trim() === "" ? "-1" : seed.trim());
     if (image) fd.append("image", image);
+    const wantSpeech = audio === "speech" || audio === "both";
+    if (wantSpeech && !speech.trim()) {
+      setBusy(false);
+      return setMsg("대사를 입력해주세요");
+    }
+    fd.append("audio_mode", audio === "sfx" || audio === "both" ? "sfx" : "none");
+    fd.append("sfx_prompt", sfxPrompt);
+    if (wantSpeech) {
+      fd.append("speech_text", speech);
+      fd.append("voice", voice);
+      if (voice === "clone" && voiceRef) fd.append("voice_ref", voiceRef);
+    }
     try {
       const r = await fetch("/api/jobs", { method: "POST", body: fd });
       const data = await r.json();
@@ -158,6 +183,11 @@ export default function Home() {
     setDuration(j.duration);
     setQuality(j.quality);
     setSeed(String(j.seed));
+    const sp = !!j.speech_text, fx = j.audio_mode === "sfx";
+    setAudio(sp && fx ? "both" : sp ? "speech" : fx ? "sfx" : "none");
+    setSpeech(j.speech_text ?? "");
+    setVoice(j.voice ?? "female");
+    setSfxPrompt(j.sfx_prompt ?? "");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -279,6 +309,50 @@ export default function Home() {
               </div>
             </div>
           )}
+          <label className="lbl">오디오</label>
+          <Segmented
+            value={audio}
+            options={["none", "sfx", "speech", "both"]}
+            onChange={(v) => setAudio(v as AudioChoice)}
+            label={(v) => AUDIO_LABEL[v as AudioChoice]}
+          />
+          {(audio === "speech" || audio === "both") && (
+            <>
+              <label className="lbl">대사 (최대 5초)</label>
+              <textarea
+                value={speech}
+                onChange={(e) => setSpeech(e.target.value.slice(0, 120))}
+                placeholder="예: 안녕! 여기가 경희대 국제캠퍼스야."
+                rows={2}
+              />
+              <label className="lbl">목소리</label>
+              <Segmented value={voice} options={["female", "male", "clone"]} onChange={setVoice} label={(v) => VOICE_LABEL[v]} />
+              {voice === "clone" && (
+                <input
+                  className="input file"
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => setVoiceRef(e.target.files?.[0] ?? null)}
+                />
+              )}
+              <p className="hint">
+                영상 길이는 대사에 맞춰 자동으로 정해져요. 얼굴이 정면으로 크게 보여야 입 모양이 잘 맞아요.
+                {voice === "clone" ? " 내 목소리는 3~10초 녹음 파일을 올려주세요." : " 한국어는 '내 목소리'가 가장 자연스러워요."}
+              </p>
+            </>
+          )}
+          {(audio === "sfx" || audio === "both") && (
+            <>
+              <label className="lbl">효과음 설명 (선택)</label>
+              <input
+                className="input"
+                value={sfxPrompt}
+                onChange={(e) => setSfxPrompt(e.target.value)}
+                placeholder="비우면 영상 프롬프트 사용. 예: rain, footsteps, wind"
+              />
+            </>
+          )}
+
           {resolution === "720p" && (
             <p className="hint warn">720p·5초는 T4에서 오래 걸려요. 먼저 480p로 테스트하세요.</p>
           )}
@@ -295,7 +369,8 @@ export default function Home() {
             <article key={j.id} className={`card ${j.status}`}>
               <div className={`media r${j.aspect.replace(":", "x")}`}>
                 {j.video_url ? (
-                  <video src={j.video_url} controls loop muted playsInline preload="metadata" />
+                  <video src={j.video_url} controls loop playsInline preload="metadata"
+                    muted={!j.speech_text && j.audio_mode !== "sfx"} />
                 ) : (
                   <div className="placeholder">
                     {j.status === "failed" ? "⚠" : j.progress ? (
@@ -317,11 +392,19 @@ export default function Home() {
                 <p className="prompt" title={j.prompt}>{j.prompt}</p>
                 <p className="tags">
                   <span>{STATUS_LABEL[j.status]}</span>
-                  <span>{j.resolution} · {j.aspect} · {j.duration}초</span>
+                  <span>{j.resolution} · {j.aspect} · {j.duration === "auto" ? "자동" : `${j.duration}초`}</span>
+                  {j.speech_text && <span>대사 · {VOICE_LABEL[j.voice ?? "female"]}</span>}
+                  {j.audio_mode === "sfx" && <span>효과음</span>}
                   {j.preset !== "none" && <span>{opts?.camera_presets.find((p) => p.id === j.preset)?.name}</span>}
                   {j.has_image && <span>I2V</span>}
                   {j.gen_seconds ? <span>{Math.round(j.gen_seconds)}s</span> : null}
                 </p>
+                {j.warning && (
+                  <details className="warn">
+                    <summary>경고 보기</summary>
+                    <pre>{j.warning}</pre>
+                  </details>
+                )}
                 {j.error && (
                   <details>
                     <summary>오류 보기</summary>

@@ -132,6 +132,8 @@ class DryRunRunner:
     SETUP_S = 6.0
     STEP_S = 0.25
     DECODE_S = 1.5
+    POST_SETUP_S = 4.0
+    POST_S = 3.0
 
     def __init__(self):
         self._started = {}
@@ -140,18 +142,45 @@ class DryRunRunner:
         return {"ok": True, "user": "dry-run"}
 
     def submit(self, batch_id, jobs):
+        """Same event order as kaggle/worker.py."""
         t = time.time()
-        events = [{"t": "setup", "ts": t}]
+        ev = []
+
+        def add(event, **kw):
+            ev.append({"t": event, "ts": t, **kw})
+
+        add("setup")
         t += self.SETUP_S
+        if any(j["speech"] for j in jobs):
+            add("phase", stage="speech")
+            t += 2.0 * sum(1 for j in jobs if j["speech"])
         ordered = [j for j in jobs if not j["image_b64"]] + [j for j in jobs if j["image_b64"]]
+        kind = None
         for j in ordered:
-            events.append({"t": "start", "id": j["id"], "n": j["steps"], "ts": t})
+            k = "i2v" if j["image_b64"] else "t2v"
+            if k != kind:
+                add("load", kind=k)
+                t += 1.0
+                kind = k
+            add("start", id=j["id"], n=j["steps"])
             for i in range(1, j["steps"] + 1):
                 t += self.STEP_S
-                events.append({"t": "step", "id": j["id"], "i": i, "n": j["steps"], "ts": t})
+                add("step", id=j["id"], i=i, n=j["steps"])
             t += self.DECODE_S
-            events.append({"t": "done", "id": j["id"], "secs": 1, "ts": t})
-        self._started[batch_id] = (t, jobs, events)
+            add("gen_done", id=j["id"], secs=1)
+        for stage in ("lipsync", "sfx"):
+            todo = [j for j in ordered if (j["speech"] if stage == "lipsync" else j["sfx"])]
+            if not todo:
+                continue
+            add("phase", stage=f"{stage}_setup")
+            t += self.POST_SETUP_S
+            for j in todo:
+                add("post", id=j["id"], stage=stage)
+                t += self.POST_S
+                add("post_done", id=j["id"], stage=stage)
+        for j in ordered:
+            add("done", id=j["id"])
+        self._started[batch_id] = (t, jobs, ev)
         return batch_id
 
     def poll(self, ref):
@@ -177,8 +206,10 @@ class DryRunRunner:
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error",
                 "-f", "lavfi", "-i", f"testsrc2=size={j['width']}x{j['height']}:rate={j['fps']}",
-                "-t", f"{secs:.2f}", "-pix_fmt", "yuv420p", str(path),
             ]
+            if j["speech"] or j["sfx"]:  # beep instead of real audio
+                cmd += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-c:a", "aac"]
+            cmd += ["-t", f"{secs:.2f}", "-pix_fmt", "yuv420p", str(path)]
             try:
                 subprocess.run(cmd, check=True)
                 results[j["id"]] = {"status": "done", "file": path.name, "seconds": 0}

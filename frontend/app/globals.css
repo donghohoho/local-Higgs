@@ -89,3 +89,5 @@ details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; o
 .actions button, .actions a { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
   padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--text); text-decoration: none; }
 .actions .del { color: var(--bad); }
+details.warn { color: #ffd27a; }
+.input.file { margin-top: 8px; padding: 8px; font-size: 12px; }

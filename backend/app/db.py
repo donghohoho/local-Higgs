@@ -29,7 +29,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     batch_id TEXT,
     output_file TEXT,
     gen_seconds REAL,
-    error TEXT
+    error TEXT,
+    audio_mode TEXT NOT NULL DEFAULT 'none',  -- none | sfx
+    sfx_prompt TEXT,
+    speech_text TEXT,
+    voice TEXT,                    -- female | male | clone
+    voice_ref_path TEXT
 );
 CREATE TABLE IF NOT EXISTS batches (
     id TEXT PRIMARY KEY,
@@ -38,6 +43,15 @@ CREATE TABLE IF NOT EXISTS batches (
     message TEXT
 );
 """
+
+
+MIGRATIONS = [
+    ("audio_mode", "TEXT NOT NULL DEFAULT 'none'"),
+    ("sfx_prompt", "TEXT"),
+    ("speech_text", "TEXT"),
+    ("voice", "TEXT"),
+    ("voice_ref_path", "TEXT"),
+]
 
 
 def _conn():
@@ -49,7 +63,11 @@ def _conn():
 def init():
     with _lock, _conn() as c:
         c.executescript(SCHEMA)
-        # a crash mid-run leaves nothing stuck: Kaggle keeps running; worker resumes polling
+        # older databases: add the audio columns
+        have = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
+        for col, typ in MIGRATIONS:
+            if col not in have:
+                c.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typ}")
 
 
 def new_id():
