@@ -28,10 +28,12 @@ fi
 echo "▶ 패키지 설치 중… (몇 분 걸려요)"
 local/.venv/bin/pip install -q --upgrade pip
 local/.venv/bin/pip install -q -e "local/FastVideo[mlx]"
-local/.venv/bin/pip install -q -U "huggingface_hub[cli]>=0.34"
+# FastVideo가 설치한 transformers와 맞는 huggingface_hub 버전으로 맞추기 (2.x는 transformers와 충돌)
+local/.venv/bin/pip install -q "huggingface_hub>=1.5,<2"
+local/.venv/bin/python -c "import transformers, diffusers; print('▶ 패키지 확인 OK')"
 
-echo "▶ FastMetal Wan 2.2 5B 받는 중… (약 19.5GB, 인터넷 속도에 따라 10~40분)"
-local/.venv/bin/hf download FastVideo/FastMetal-5B-QAD --local-dir local/models/FastMetal-5B-QAD
+echo "▶ FastMetal Wan 2.2 5B 받는 중… (약 19.5GB, 인터넷 속도에 따라 10~40분. 이미 받은 파일은 건너뛰어요)"
+local/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('FastVideo/FastMetal-5B-QAD', local_dir='local/models/FastMetal-5B-QAD')"
 
 touch local/.ready
 echo "✔ 설치 완료. ./start.sh 로 켜고, 화면에서 '맥 로컬'을 고르세요."
