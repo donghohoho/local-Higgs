@@ -31,6 +31,8 @@ JOBS_PAYLOAD = "__JOBS_PAYLOAD__"
 
 # Hugging Face cache on local disk; saved model parts get linked in (attach_caches)
 os.environ.setdefault("HF_HOME", "/tmp/hf")
+# less fragmentation on the 16GB T4
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 MMAUDIO_CACHE = None
 
 WORK = "/kaggle/working"
@@ -220,6 +222,38 @@ def prepare_image(b64, width, height):
     return img.resize((width, height), Image.LANCZOS)
 
 
+def patch_attention(heads_per_chunk=4):
+    """T4 has no flash attention for bf16, so PyTorch builds the full attention
+    matrix (several GB). Run it a few heads at a time instead: same result,
+    a fraction of the memory."""
+    import torch
+    import torch.nn.functional as F
+
+    if getattr(F, "_lh_patched", False):
+        return
+    orig = F.scaled_dot_product_attention
+
+    def chunked(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, **kw):
+        if query.dim() != 4 or query.shape[1] <= heads_per_chunk or query.shape[-2] * key.shape[-2] < 4_000_000:
+            return orig(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p,
+                        is_causal=is_causal, scale=scale, **kw)
+        out = []
+        for i in range(0, query.shape[1], heads_per_chunk):
+            sl = slice(i, i + heads_per_chunk)
+            m = attn_mask
+            if m is not None and m.dim() == 4 and m.shape[1] == query.shape[1]:
+                m = m[:, sl]
+            k_ = key[:, sl] if key.shape[1] == query.shape[1] else key
+            v_ = value[:, sl] if value.shape[1] == query.shape[1] else value
+            out.append(orig(query[:, sl], k_, v_, attn_mask=m, dropout_p=dropout_p,
+                            is_causal=is_causal, scale=scale))
+        return torch.cat(out, dim=1)
+
+    F.scaled_dot_product_attention = chunked
+    torch.nn.functional.scaled_dot_product_attention = chunked
+    F._lh_patched = True
+
+
 def load_pipeline(kind, model_id, dtype):
     import torch
     from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, WanPipeline
@@ -233,6 +267,13 @@ def load_pipeline(kind, model_id, dtype):
     else:
         pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
 
+    patch_attention()
+    # keep the transformer weights in 8-bit, compute in bf16: about 5GB less VRAM
+    try:
+        pipe.transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=dtype)
+        log("transformer weights stored as fp8")
+    except Exception as e:
+        log(f"fp8 storage unavailable: {e}")
     # Kaggle T4 = 16GB VRAM, so stream model parts between CPU and GPU.
     pipe.enable_model_cpu_offload()
     pipe.set_progress_bar_config(disable=True)  # progress goes through emit()
