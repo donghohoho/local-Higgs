@@ -219,7 +219,11 @@ export default function Home() {
 
       {k && !k.ok && !status?.dry_run && (
         <div className="banner">
-          Kaggle 인증 실패: <code>~/.kaggle/access_token</code> 파일을 확인하세요. ({k.error})
+          Kaggle 연결 안 됨: {k.error}
+          <br />
+          kaggle.com/settings/api → Generate New Token → 복사 후 터미널에서{" "}
+          <code>mkdir -p ~/.kaggle && pbpaste &gt; ~/.kaggle/access_token && chmod 600 ~/.kaggle/access_token</code>
+          {" "}실행. 30초 안에 자동으로 다시 확인해요.
         </div>
       )}
       {status?.last_error && <div className="banner">{status.last_error}</div>}

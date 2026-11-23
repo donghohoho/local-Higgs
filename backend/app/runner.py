@@ -7,13 +7,35 @@ fetch(ref, dest)       -> result.json dict, files downloaded into dest
 
 import base64
 import json
+import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
 from . import config
+
+TOKEN_FILE = Path("~/.kaggle/access_token").expanduser()
+LEGACY_FILE = Path("~/.kaggle/kaggle.json").expanduser()
+
+
+def token_present():
+    return bool(os.environ.get("KAGGLE_API_TOKEN")) or TOKEN_FILE.exists() or LEGACY_FILE.exists()
+
+
+def _import_kaggle_api():
+    """The kaggle package imports itself in a cycle; a failed/raced import leaves
+    half-loaded modules behind. Drop them and try once more."""
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+    except ImportError:
+        for name in [m for m in sys.modules if m == "kaggle" or m.startswith("kaggle.")]:
+            del sys.modules[name]
+        import kaggle  # noqa: F401  (package first, then the submodule)
+        from kaggle.api.kaggle_api_extended import KaggleApi
+    return KaggleApi
 
 
 def _find(dest: Path, name: str):
@@ -29,9 +51,7 @@ class KaggleRunner:
     def api(self):
         with self._lock:
             if self._api is None:
-                # import late: the kaggle package tries to authenticate on import
-                from kaggle.api.kaggle_api_extended import KaggleApi
-
+                KaggleApi = _import_kaggle_api()
                 api = KaggleApi()
                 api.authenticate()
                 self._api = api
@@ -41,10 +61,12 @@ class KaggleRunner:
         return self.api().get_config_value("username")
 
     def check(self):
+        if not token_present():
+            return {"ok": False, "error": f"토큰 파일이 없어요: {TOKEN_FILE}"}
         try:
             return {"ok": True, "user": self.username()}
-        except SystemExit:  # authenticate() calls sys.exit when no token exists
-            return {"ok": False, "error": "토큰 없음 (~/.kaggle/access_token)"}
+        except SystemExit:  # authenticate() calls sys.exit when the token is rejected
+            return {"ok": False, "error": "토큰이 거부됐어요. Kaggle에서 새 토큰을 만들어 다시 저장하세요."}
         except Exception as e:
             return {"ok": False, "error": str(e) or e.__class__.__name__}
 
@@ -222,7 +244,13 @@ class DryRunRunner:
 
 
 def make_runner():
-    return DryRunRunner() if config.DRY_RUN else KaggleRunner()
+    if config.DRY_RUN:
+        return DryRunRunner()
+    try:
+        _import_kaggle_api()  # import on the main thread, before worker threads start
+    except Exception:
+        pass
+    return KaggleRunner()
 
 
 def move_output(src_dir: Path, file_name: str):
