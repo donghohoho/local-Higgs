@@ -109,9 +109,29 @@ class KaggleRunner:
         except Exception as e:
             return f"(log unavailable: {e})"
 
+    def stream_events(self, ref):
+        """Live progress markers from the running kernel's log."""
+        for ev in self.api().kernels_logs_stream(ref):
+            yield from parse_markers(ev.get("data") or "")
+
+
+def parse_markers(text):
+    for line in text.splitlines():
+        k = line.find("LHP {")
+        if k < 0:
+            continue
+        try:
+            yield json.loads(line[k + 4:])
+        except ValueError:
+            continue
+
 
 class DryRunRunner:
-    """Fakes Kaggle: after ~8s returns ffmpeg test videos."""
+    """Fakes Kaggle with a timeline of progress events and ffmpeg test videos."""
+
+    SETUP_S = 6.0
+    STEP_S = 0.25
+    DECODE_S = 1.5
 
     def __init__(self):
         self._started = {}
@@ -120,15 +140,34 @@ class DryRunRunner:
         return {"ok": True, "user": "dry-run"}
 
     def submit(self, batch_id, jobs):
-        self._started[batch_id] = (time.time(), jobs)
+        t = time.time()
+        events = [{"t": "setup", "ts": t}]
+        t += self.SETUP_S
+        ordered = [j for j in jobs if not j["image_b64"]] + [j for j in jobs if j["image_b64"]]
+        for j in ordered:
+            events.append({"t": "start", "id": j["id"], "n": j["steps"], "ts": t})
+            for i in range(1, j["steps"] + 1):
+                t += self.STEP_S
+                events.append({"t": "step", "id": j["id"], "i": i, "n": j["steps"], "ts": t})
+            t += self.DECODE_S
+            events.append({"t": "done", "id": j["id"], "secs": 1, "ts": t})
+        self._started[batch_id] = (t, jobs, events)
         return batch_id
 
     def poll(self, ref):
-        t0, _ = self._started.get(ref, (0, []))
-        return ("done", "") if time.time() - t0 > 8 else ("running", "dry-run")
+        end, _, _ = self._started.get(ref, (0, [], []))
+        return ("done", "") if time.time() > end + 1 else ("running", "dry-run")
+
+    def stream_events(self, ref):
+        _, _, events = self._started[ref]
+        for ev in events:
+            wait = ev["ts"] - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            yield ev
 
     def fetch(self, ref, dest: Path):
-        _, jobs = self._started[ref]
+        _, jobs, _ = self._started[ref]
         out = dest / "outputs"
         out.mkdir(parents=True, exist_ok=True)
         results = {}

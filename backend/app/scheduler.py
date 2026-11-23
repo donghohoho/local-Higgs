@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import config, db
 from .presets import FPS, NEGATIVE_PROMPT
+from .progress import tracker
 from .runner import make_runner, move_output
 
 runner = make_runner()
@@ -66,6 +67,11 @@ def _start_batch():
         return
     db.update_batch(batch_id, "submitted", ref)
     state["batch_ref"] = ref
+    _track(batch_id, ref, time.time())
+
+
+def _track(batch_id, ref, submit_ts):
+    tracker.start(batch_id, db.jobs_in_batch(batch_id), submit_ts, lambda: runner.stream_events(ref))
 
 
 def _check_batch(batch):
@@ -107,6 +113,7 @@ def _check_batch(batch):
         db.update_job(j["id"], status="failed", error=err[-3000:])
 
     db.update_batch(batch["id"], "done" if status == "done" else "failed", ref)
+    tracker.finish(batch["id"])
     shutil.rmtree(config.BATCH_DIR / batch["id"] / "kernel", ignore_errors=True)
     state["batch_ref"] = None
     state["batch_detail"] = None
@@ -123,6 +130,9 @@ def tick():
 def loop():
     state["kaggle"] = runner.check()
     last_check = time.time()
+    b = db.active_batch()
+    if b and not config.DRY_RUN:  # app restarted while Kaggle was running
+        _track(b["id"], b["message"] or b["id"], b["created_at"])
     while True:
         if not state["kaggle"]["ok"] and time.time() - last_check > 30:
             state["kaggle"] = runner.check()  # token may have been added since startup

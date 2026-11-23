@@ -25,7 +25,15 @@ type Job = {
   gen_seconds: number | null;
   error: string | null;
   created_at: number;
+  progress: { percent: number; eta_s: number; stage: string } | null;
 };
+
+function fmtEta(s: number) {
+  if (s <= 0) return "곧 완료";
+  if (s < 60) return `${s}초 남음`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `약 ${m}분 남음` : `약 ${Math.floor(m / 60)}시간 ${m % 60}분 남음`;
+}
 type Status = {
   dry_run: boolean;
   model: string;
@@ -290,8 +298,18 @@ export default function Home() {
                   <video src={j.video_url} controls loop muted playsInline preload="metadata" />
                 ) : (
                   <div className="placeholder">
-                    {j.status === "failed" ? "⚠" : <span className="spin" />}
-                    <span>{STATUS_LABEL[j.status]}</span>
+                    {j.status === "failed" ? "⚠" : j.progress ? (
+                      <b className="pct">{j.progress.percent}%</b>
+                    ) : (
+                      <span className="spin" />
+                    )}
+                    <span>{j.progress ? j.progress.stage : STATUS_LABEL[j.status]}</span>
+                    {j.progress && (
+                      <>
+                        <div className="bar"><i style={{ width: `${j.progress.percent}%` }} /></div>
+                        <small>{fmtEta(j.progress.eta_s)} (예상)</small>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

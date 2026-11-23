@@ -29,6 +29,11 @@ def log(msg):
     print(f"[local-higgs {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def emit(kind, **kw):
+    """Progress marker. The app reads these from the live Kaggle log."""
+    print("LHP " + json.dumps({"t": kind, "ts": time.time(), **kw}), flush=True)
+
+
 def install_deps():
     pkgs = [
         "diffusers>=0.35.0",
@@ -85,6 +90,7 @@ def load_pipeline(kind, model_id, dtype):
 
     # Kaggle T4 = 16GB VRAM, so stream model parts between CPU and GPU.
     pipe.enable_model_cpu_offload()
+    pipe.set_progress_bar_config(disable=True)  # progress goes through emit()
     try:
         pipe.vae.enable_tiling()
     except Exception as e:  # older diffusers
@@ -97,7 +103,15 @@ def run_job(pipe, job, kind):
     from diffusers.utils import export_to_video
 
     gen = torch.Generator(device="cpu").manual_seed(int(job["seed"]))
+    n = job["steps"]
+
+    def on_step(_pipe, step, _timestep, cb_kwargs):
+        emit("step", id=job["id"], i=step + 1, n=n)
+        return cb_kwargs
+
+    emit("start", id=job["id"], n=n)
     kwargs = dict(
+        callback_on_step_end=on_step,
         prompt=job["prompt"],
         negative_prompt=job["negative_prompt"],
         height=job["height"],
@@ -119,6 +133,7 @@ def run_job(pipe, job, kind):
 
 def main():
     batch_id, model_id, jobs = load_batch()
+    emit("setup", batch=batch_id)
     results = {j["id"]: {"status": "pending"} for j in jobs}
     write_result(batch_id, results)
     log(f"batch {batch_id}: {len(jobs)} job(s)")
@@ -141,11 +156,13 @@ def main():
         if not group:
             continue
         try:
+            emit("load", kind=kind)
             pipe = load_pipeline(kind, model_id, dtype)
         except Exception:
             err = traceback.format_exc()
             log(err)
             for j in group:
+                emit("fail", id=j["id"])
                 results[j["id"]] = {"status": "failed", "error": "model load failed:\n" + err[-1500:]}
             write_result(batch_id, results)
             continue
@@ -155,10 +172,12 @@ def main():
             try:
                 path, secs = run_job(pipe, j, kind)
                 results[j["id"]] = {"status": "done", "file": os.path.basename(path), "seconds": round(secs, 1)}
+                emit("done", id=j["id"], secs=round(secs, 1))
                 log(f"done in {secs:.0f}s")
             except Exception:
                 err = traceback.format_exc()
                 log(err)
+                emit("fail", id=j["id"])
                 results[j["id"]] = {"status": "failed", "error": err[-1500:]}
             write_result(batch_id, results)
             torch.cuda.empty_cache()

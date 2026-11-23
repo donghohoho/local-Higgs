@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, db, scheduler
 from .presets import DURATIONS, QUALITY_STEPS, SIZES, build_prompt, public_options
+from .progress import tracker
 
 
 @asynccontextmanager
@@ -48,7 +49,16 @@ def status():
 
 @app.get("/api/jobs")
 def jobs():
-    return [_public(j) for j in db.list_jobs()]
+    rows = db.list_jobs()
+    prog = {}
+    for bid in {j["batch_id"] for j in rows if j["status"] in ("submitted", "running")}:
+        prog.update(tracker.progress(bid, db.jobs_in_batch(bid)))
+    out = []
+    for j in rows:
+        pj = _public(j)
+        pj["progress"] = prog.get(j["id"]) if j["status"] in ("submitted", "running") else None
+        out.append(pj)
+    return out
 
 
 @app.post("/api/jobs")
