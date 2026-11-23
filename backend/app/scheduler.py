@@ -88,10 +88,41 @@ def _track(batch_id, ref, submit_ts, cached=False):
     tracker.start(batch_id, db.jobs_in_batch(batch_id), submit_ts, lambda: runner.stream_events(ref), cached=cached)
 
 
+QUEUE_HINT = (
+    "Kaggle이 GPU를 {m}분 동안 배정하지 않았어요.\n"
+    "· kaggle.com → Settings → Phone Verification (휴대폰 인증) 확인\n"
+    "· Settings에서 이번 주 GPU 남은 시간 확인\n"
+    "· kaggle.com/code 에서 local-higgs-worker 노트북이 멈춰 있으면 Stop session\n"
+    "확인 후 '재시도'를 누르세요."
+)
+
+
+def _fail_batch(batch, msg):
+    for j in db.jobs_in_batch(batch["id"]):
+        if j["status"] in ("submitted", "running"):
+            db.update_job(j["id"], status="failed", error=msg)
+    db.update_batch(batch["id"], "failed", batch["message"])
+    tracker.finish(batch["id"])
+    state["batch_ref"] = None
+    state["batch_detail"] = None
+
+
+def cancel_active():
+    b = db.active_batch()
+    if not b:
+        return False
+    _fail_batch(b, "취소됨. Kaggle에서 이미 실행 중이었다면 kaggle.com/code 에서 Stop session 해주세요.")
+    return True
+
+
 def _check_batch(batch):
     ref = batch["message"] or batch["id"]
     status, msg = runner.poll(ref)
     state["batch_detail"] = msg
+    tracker.set_remote(batch["id"], msg if status == "running" else status)
+    if status == "running" and msg == "queued" and time.time() - batch["created_at"] > config.QUEUE_TIMEOUT:
+        _fail_batch(batch, QUEUE_HINT.format(m=config.QUEUE_TIMEOUT // 60))
+        return
     if status == "running":
         if batch["status"] != "running":
             db.update_batch(batch["id"], "running", ref)

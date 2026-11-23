@@ -51,6 +51,14 @@ def status():
     }
 
 
+@app.post("/api/batch/cancel")
+def cancel_batch():
+    if not scheduler.cancel_active():
+        raise HTTPException(400, "실행 중인 작업이 없어요")
+    scheduler.wake()
+    return {"ok": True}
+
+
 @app.get("/api/cache")
 def cache_status():
     return {"parts": scheduler.cache.public(), "video_ready": scheduler.cache.video_ready()}

@@ -84,8 +84,14 @@ class Tracker:
                 "started_any": False,
                 "last_sfx_ts": None,
                 "stop": False,
+                "remote": None,        # Kaggle's own status: queued / running ...
             }
         threading.Thread(target=self._follow, args=(batch_id, stream_factory), daemon=True).start()
+
+    def set_remote(self, batch_id, status):
+        with self.lock:
+            if batch_id in self.batches:
+                self.batches[batch_id]["remote"] = status
 
     def finish(self, batch_id):
         with self.lock:
@@ -201,7 +207,12 @@ class Tracker:
                 cursor = max(pre - (now - b["submit_ts"]), 20)
                 in_speech = "speech" in b["phase"]
                 for j in ordered:
-                    stage[j["id"]] = "음성 생성 중" if in_speech and needs(j)["speech"] else "GPU 준비 중"
+                    if b["remote"] == "queued":
+                        stage[j["id"]] = "Kaggle GPU 배정 기다리는 중"
+                    elif in_speech and needs(j)["speech"]:
+                        stage[j["id"]] = "음성 생성 중"
+                    else:
+                        stage[j["id"]] = "GPU 준비 중"
 
             # video
             prev_kind = None

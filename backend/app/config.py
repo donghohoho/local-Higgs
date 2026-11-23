@@ -38,5 +38,7 @@ POLL_SECONDS = int(os.environ.get("LH_POLL_SECONDS", "30"))
 MAX_BATCH = int(os.environ.get("LH_MAX_BATCH", "4"))
 # collect jobs for this long before pushing, so several go in one GPU session
 BATCH_WAIT_SECONDS = int(os.environ.get("LH_BATCH_WAIT_SECONDS", "20"))
+# a batch Kaggle keeps "queued" this long is failed (no GPU given: phone not verified, quota used up)
+QUEUE_TIMEOUT = int(os.environ.get("LH_QUEUE_TIMEOUT", "1200"))
 SESSION_TIMEOUT = int(os.environ.get("LH_SESSION_TIMEOUT", str(4 * 3600)))
 MAX_IMAGE_BYTES = 6 * 1024 * 1024

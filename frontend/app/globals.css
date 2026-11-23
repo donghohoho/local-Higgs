@@ -105,3 +105,4 @@ details.warn { color: #ffd27a; }
 .cs.failed { color: var(--bad); }
 .cs.none { color: var(--muted); }
 .go.small { width: auto; padding: 8px 14px; font-size: 13px; margin-top: 0; }
+.pill .x { background: none; border: 0; color: var(--bad); cursor: pointer; font-size: 12px; margin-left: 8px; padding: 0; }

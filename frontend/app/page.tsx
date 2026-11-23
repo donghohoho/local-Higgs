@@ -234,7 +234,20 @@ export default function Home() {
           <span className={`dot ${statusOk ? "ok" : "bad"}`} />
           {statusText}
           {status?.active_batch && (
-            <span className="pill">GPU 작업 중 · {status.batch_detail ?? status.active_batch.status}</span>
+            <span className="pill">
+              {status.batch_detail === "queued" ? "Kaggle GPU 대기 중" : `GPU 작업 중 · ${status.batch_detail ?? status.active_batch.status}`}
+              <button
+                className="x"
+                title="이번 작업 취소"
+                onClick={async () => {
+                  if (!confirm("지금 Kaggle 작업을 취소할까요? (영상은 '실패'로 바뀌고 재시도할 수 있어요)")) return;
+                  await fetch("/api/batch/cancel", { method: "POST" });
+                  refresh();
+                }}
+              >
+                취소
+              </button>
+            </span>
           )}
           {!!status?.queued && <span className="pill">대기 {status.queued}</span>}
           {cache.length > 0 && (
