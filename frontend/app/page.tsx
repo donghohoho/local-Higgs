@@ -84,6 +84,8 @@ export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [apiDown, setApiDown] = useState(false);
+  const [isWindows, setIsWindows] = useState(false);
+  useEffect(() => setIsWindows(/Win/i.test(navigator.userAgent)), []);
   const [cache, setCache] = useState<CachePart[]>([]);
   const [cacheOpen, setCacheOpen] = useState(false);
   const [cacheMsg, setCacheMsg] = useState<string | null>(null);
@@ -281,8 +283,18 @@ export default function Home() {
         <div className="banner">
           Kaggle 연결 안 됨: {k.error}
           <br />
-          kaggle.com/settings/api → Generate New Token → 복사 후 터미널에서{" "}
-          <code>mkdir -p ~/.kaggle && pbpaste &gt; ~/.kaggle/access_token && chmod 600 ~/.kaggle/access_token</code>
+          kaggle.com/settings/api → Generate New Token → 복사 후{" "}
+          {isWindows ? (
+            <>
+              PowerShell에서{" "}
+              <code>mkdir $HOME\.kaggle -Force; Get-Clipboard | Set-Content -NoNewline $HOME\.kaggle\access_token</code>
+            </>
+          ) : (
+            <>
+              터미널에서{" "}
+              <code>mkdir -p ~/.kaggle && pbpaste &gt; ~/.kaggle/access_token && chmod 600 ~/.kaggle/access_token</code>
+            </>
+          )}
           {" "}실행. 30초 안에 자동으로 다시 확인해요.
         </div>
       )}

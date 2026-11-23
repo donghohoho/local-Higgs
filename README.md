@@ -76,6 +76,34 @@ chmod +x start.sh
 | 대사·립싱크 | 약 9GB |
 | 효과음 | 약 9GB |
 
+## 윈도우에서 쓰기 (갤럭시북 등)
+
+노트북 사양과 상관없어요. 생성은 Kaggle GPU에서 하고, 노트북에는 화면만 떠요.
+
+**준비물** (한 번만)
+1. [Python](https://www.python.org/downloads/) 설치 — 첫 화면에서 **Add python.exe to PATH** 체크
+2. [Node.js](https://nodejs.org/) LTS 설치
+3. [Git](https://git-scm.com/download/win) 설치
+4. Kaggle 가입 + 휴대폰 인증 → kaggle.com/settings/api → **Generate New Token** → 복사
+5. PowerShell(시작 메뉴에서 "PowerShell" 검색)에서 토큰 저장:
+
+   ```powershell
+   mkdir $HOME\.kaggle -Force
+   Get-Clipboard | Set-Content -NoNewline $HOME\.kaggle\access_token
+   ```
+
+**받기·실행**
+
+```powershell
+cd $HOME
+git clone https://github.com/donghohoho/local-higgs.git
+cd local-higgs
+.\start.bat
+```
+
+다음부터는 탐색기에서 `local-higgs` 폴더의 **start.bat**을 더블클릭하면 켜져요. 창을 닫으면 꺼져요.
+업데이트는 `git pull` 후 다시 실행하세요.
+
 ## 소요 시간 (예상)
 
 | 단계 | 시간 |
