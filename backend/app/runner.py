@@ -43,6 +43,27 @@ def explain_http_error(e):
     return text
 
 
+def dedupe_blobs(jobs):
+    """Move images / voice samples into one shared table so a picture used by
+    four jobs is sent once (the whole script must stay under 1MB)."""
+    import hashlib
+
+    blobs, out = {}, []
+    for j in jobs:
+        j = json.loads(json.dumps(j))
+        if j.get("image_b64"):
+            key = hashlib.sha1(j["image_b64"].encode()).hexdigest()[:16]
+            blobs[key] = j.pop("image_b64")
+            j["image_b64"], j["image_ref"] = None, key
+        sp = j.get("speech")
+        if sp and sp.get("ref_b64"):
+            key = hashlib.sha1(sp["ref_b64"].encode()).hexdigest()[:16]
+            blobs[key] = sp.pop("ref_b64")
+            sp["ref_b64"], sp["ref_ref"] = None, key
+        out.append(j)
+    return out, blobs
+
+
 def token_present():
     return bool(os.environ.get("KAGGLE_API_TOKEN")) or TOKEN_FILE.exists() or LEGACY_FILE.exists()
 
@@ -128,8 +149,9 @@ class KaggleRunner:
         return f"{ref}/{version}" if version else ref
 
     def submit(self, batch_id, jobs, kernel_sources=()):
+        jobs, blobs = dedupe_blobs(jobs)
         payload = base64.b64encode(
-            json.dumps({"batch_id": batch_id, "model": config.MODEL_ID, "jobs": jobs}).encode()
+            json.dumps({"batch_id": batch_id, "model": config.MODEL_ID, "jobs": jobs, "blobs": blobs}).encode()
         ).decode()
         code = config.WORKER_TEMPLATE.read_text(encoding="utf-8").replace(
             'JOBS_PAYLOAD = "__JOBS_PAYLOAD__"', f'JOBS_PAYLOAD = "{payload}"', 1

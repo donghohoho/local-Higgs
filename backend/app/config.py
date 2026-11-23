@@ -41,4 +41,4 @@ BATCH_WAIT_SECONDS = int(os.environ.get("LH_BATCH_WAIT_SECONDS", "20"))
 # a batch Kaggle keeps "queued" this long is failed (no GPU given: phone not verified, quota used up)
 QUEUE_TIMEOUT = int(os.environ.get("LH_QUEUE_TIMEOUT", "1200"))
 SESSION_TIMEOUT = int(os.environ.get("LH_SESSION_TIMEOUT", str(4 * 3600)))
-MAX_IMAGE_BYTES = 6 * 1024 * 1024
+MAX_IMAGE_BYTES = 20 * 1024 * 1024

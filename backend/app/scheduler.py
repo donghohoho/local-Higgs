@@ -14,6 +14,7 @@ from pathlib import Path
 from . import config, db
 from .presets import FPS, NEGATIVE_PROMPT
 from .progress import tracker
+from . import media
 from .cache import Cache
 from .runner import make_runner, move_output
 
@@ -30,7 +31,10 @@ def wake():
 def _payload(job):
     image_b64 = None
     if job["image_path"]:
-        image_b64 = base64.b64encode(Path(job["image_path"]).read_bytes()).decode()
+        data = Path(job["image_path"]).read_bytes()
+        if len(data) > media.IMAGE_MAX_BYTES:  # also covers images uploaded before this check
+            data = media.shrink_image(data, job["width"], job["height"])
+        image_b64 = base64.b64encode(data).decode()
     return {
         "id": job["id"],
         "prompt": job["final_prompt"],
@@ -53,7 +57,8 @@ def _speech(job):
         return None
     ref = None
     if job["voice"] == "clone" and job["voice_ref_path"]:
-        ref = base64.b64encode(Path(job["voice_ref_path"]).read_bytes()).decode()
+        p = Path(job["voice_ref_path"])
+        ref = base64.b64encode(media.shrink_voice(p.read_bytes(), p.suffix)).decode()
     return {"text": job["speech_text"], "voice": job["voice"] or "female", "ref_b64": ref}
 
 
@@ -65,13 +70,38 @@ def _start_batch():
     if time.time() - queued[-1]["created_at"] < config.BATCH_WAIT_SECONDS and len(queued) < config.MAX_BATCH:
         return
 
+    # build inputs; keep the batch under Kaggle's 1MB script limit
+    payloads, picked, used, seen = [], [], 0, set()
+    for j in queued:
+        try:
+            pl = _payload(j)
+        except Exception as e:
+            db.update_job(j["id"], status="failed", error=f"입력 파일 처리 실패: {e}")
+            continue
+        size = 0
+        for blob in (pl["image_b64"], (pl["speech"] or {}).get("ref_b64")):
+            if blob and blob not in seen:
+                size += len(blob)
+        seen.update(b for b in (pl["image_b64"], (pl["speech"] or {}).get("ref_b64")) if b)
+        if picked and used + size > media.BATCH_BUDGET:
+            break  # goes in the next batch
+        if size > media.BATCH_BUDGET:
+            db.update_job(j["id"], status="failed", error="입력 파일이 너무 커요 (이미지/음성을 줄여주세요)")
+            continue
+        payloads.append(pl)
+        picked.append(j)
+        used += size
+    queued = picked
+    if not queued:
+        return
+
     batch_id = db.new_id()
     db.insert_batch(batch_id)
     for j in queued:
         db.update_job(j["id"], status="submitted", batch_id=batch_id, error=None)
     try:
         sources = cache.ready_sources()
-        ref = runner.submit(batch_id, [_payload(j) for j in queued], kernel_sources=sources)
+        ref = runner.submit(batch_id, payloads, kernel_sources=sources)
     except BaseException as e:
         msg = f"제출 실패: {e}"
         db.update_batch(batch_id, "failed", msg)

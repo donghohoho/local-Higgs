@@ -142,6 +142,13 @@ def attach_caches(root="/kaggle/input"):
 
 def load_batch():
     data = json.loads(base64.b64decode(JOBS_PAYLOAD).decode("utf-8"))
+    blobs = data.get("blobs", {})  # same image/voice used by several jobs is sent once
+    for j in data["jobs"]:
+        if j.get("image_ref"):
+            j["image_b64"] = blobs[j.pop("image_ref")]
+        sp = j.get("speech")
+        if sp and sp.get("ref_ref"):
+            sp["ref_b64"] = blobs[sp.pop("ref_ref")]
     return data["batch_id"], data["model"], data["jobs"]
 
 

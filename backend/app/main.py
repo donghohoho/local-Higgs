@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, scheduler
+from . import config, db, media, scheduler
 from .presets import DURATIONS, QUALITY_STEPS, SIZES, build_prompt, public_options
 from .progress import tracker
 
@@ -118,11 +118,17 @@ async def create_job(
     if image is not None and image.filename:
         data = await image.read()
         if len(data) > config.MAX_IMAGE_BYTES:
-            raise HTTPException(400, "이미지는 6MB 이하만 가능해요")
+            raise HTTPException(400, "이미지는 20MB 이하만 가능해요")
         ext = Path(image.filename).suffix.lower() or ".png"
         if ext not in (".png", ".jpg", ".jpeg", ".webp"):
             raise HTTPException(400, "png/jpg/webp만 가능해요")
-        p = config.UPLOAD_DIR / f"{db.new_id()}{ext}"
+        if resolution not in SIZES or aspect not in SIZES[resolution]:
+            raise HTTPException(400, "잘못된 해상도/비율")
+        try:  # resize now: Kaggle takes at most 1MB per job script
+            data = media.shrink_image(data, *SIZES[resolution][aspect])
+        except Exception:
+            raise HTTPException(400, "이미지를 읽지 못했어요")
+        p = config.UPLOAD_DIR / f"{db.new_id()}.jpg"
         p.write_bytes(data)
         image_path = str(p)
 
@@ -143,6 +149,15 @@ async def create_job(
         ext = Path(voice_ref.filename).suffix.lower() or ".wav"
         if ext not in (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm"):
             raise HTTPException(400, "음성은 wav/mp3/m4a/aac/ogg/flac/webm만 가능해요")
+        try:
+            small = media.shrink_voice(data, ext)
+            if small is not data:  # converted by ffmpeg
+                ext = ".mp3"
+            data = small
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception:
+            raise HTTPException(400, "음성 파일을 읽지 못했어요")
         p = config.UPLOAD_DIR / f"{db.new_id()}{ext}"
         p.write_bytes(data)
         voice_ref_path = str(p)
