@@ -74,7 +74,7 @@ class KaggleRunner:
         """Push a script kernel and start it. Returns 'user/slug/version'."""
         user = self.username()
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "script.py").write_text(code)
+        (folder / "script.py").write_text(code, encoding="utf-8")
         meta = {
             "id": f"{user}/{slug}",
             "title": slug,
@@ -92,7 +92,7 @@ class KaggleRunner:
         }
         if gpu:
             meta["machine_shape"] = "NvidiaTeslaT4"
-        (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
+        (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         kw = {"timeout": str(timeout)} if timeout else {}
         resp = self.api().kernels_push(str(folder), **kw)
         err = getattr(resp, "error", None)
@@ -106,14 +106,14 @@ class KaggleRunner:
         payload = base64.b64encode(
             json.dumps({"batch_id": batch_id, "model": config.MODEL_ID, "jobs": jobs}).encode()
         ).decode()
-        code = config.WORKER_TEMPLATE.read_text().replace(
+        code = config.WORKER_TEMPLATE.read_text(encoding="utf-8").replace(
             'JOBS_PAYLOAD = "__JOBS_PAYLOAD__"', f'JOBS_PAYLOAD = "{payload}"', 1
         )
         return self.push(config.BATCH_DIR / batch_id / "kernel", config.KERNEL_SLUG, code, gpu=True,
                          kernel_sources=kernel_sources, timeout=config.SESSION_TIMEOUT)
 
     def build_cache(self, part):
-        code = (config.CACHE_TEMPLATE.read_text()
+        code = (config.CACHE_TEMPLATE.read_text(encoding="utf-8")
                 .replace('PART = "__PART__"', f'PART = "{part}"', 1)
                 .replace('WAN = "__MODEL__"', f'WAN = "{config.MODEL_ID}"', 1))
         return self.push(config.DATA_DIR / "cache_kernels" / part, f"{config.CACHE_PREFIX}-{part}", code, gpu=False)
@@ -145,7 +145,7 @@ class KaggleRunner:
         dest.mkdir(parents=True, exist_ok=True)
         self.api().kernels_output(ref, str(dest), force=True, quiet=True)
         f = _find(dest, "result.json")
-        return json.loads(f.read_text()) if f else None
+        return json.loads(f.read_text(encoding="utf-8")) if f else None
 
     def logs(self, ref):
         try:

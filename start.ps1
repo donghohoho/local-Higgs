@@ -8,6 +8,8 @@ function Say($msg) { Write-Host "▶ $msg" }
 function Fail($msg) { Write-Host "✖ $msg" -ForegroundColor Red; exit 1 }
 
 if ($dry) { $env:LH_DRY_RUN = "1"; Say "DRY RUN 모드 (가짜 영상)" }
+$env:PYTHONUTF8 = "1"          # 윈도우 기본 인코딩(cp949) 대신 UTF-8로 파일 읽기
+$env:PYTHONIOENCODING = "utf-8"
 
 # 필요한 프로그램 확인
 foreach ($cmd in "node", "npm", "git") {

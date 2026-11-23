@@ -47,7 +47,7 @@ def needs(job):
 
 def _load_stats():
     try:
-        return {**DEFAULT_STATS, **json.loads(STATS_PATH.read_text())}
+        return {**DEFAULT_STATS, **json.loads(STATS_PATH.read_text(encoding="utf-8"))}
     except Exception:
         return dict(DEFAULT_STATS)
 
@@ -64,7 +64,7 @@ class Tracker:
             return
         self.stats[key] = (1 - ALPHA) * self.stats[key] + ALPHA * sample
         try:
-            STATS_PATH.write_text(json.dumps(self.stats, indent=2))
+            STATS_PATH.write_text(json.dumps(self.stats, indent=2), encoding="utf-8")
         except Exception:
             pass
 
