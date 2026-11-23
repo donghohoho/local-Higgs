@@ -31,6 +31,7 @@ type Job = {
   speech_text: string | null;
   voice: string | null;
   sfx_prompt: string | null;
+  engine: "kaggle" | "local";
 };
 type CachePart = { id: string; label: string; gb: number; status: string; message: string };
 const CACHE_LABEL: Record<string, string> = {
@@ -54,6 +55,7 @@ type Status = {
   batch_detail: string | null;
   queued: number;
   last_error: string | null;
+  local: { available: boolean; reason: string };
 };
 
 const STATUS_LABEL: Record<Job["status"], string> = {
@@ -90,6 +92,7 @@ export default function Home() {
   const [cacheOpen, setCacheOpen] = useState(false);
   const [cacheMsg, setCacheMsg] = useState<string | null>(null);
 
+  const [engine, setEngine] = useState<"kaggle" | "local">("kaggle");
   const [prompt, setPrompt] = useState("");
   const [preset, setPreset] = useState("none");
   const [resolution, setResolution] = useState("480p");
@@ -165,14 +168,15 @@ export default function Home() {
     fd.append("duration", duration);
     fd.append("quality", quality);
     fd.append("count", String(count));
+    fd.append("engine", engine);
     fd.append("seed", seed.trim() === "" ? "-1" : seed.trim());
-    if (image) fd.append("image", image);
-    const wantSpeech = audio === "speech" || audio === "both";
+    if (image && engine === "kaggle") fd.append("image", image);
+    const wantSpeech = engine === "kaggle" && (audio === "speech" || audio === "both");
     if (wantSpeech && !speech.trim()) {
       setBusy(false);
       return setMsg("대사를 입력해주세요");
     }
-    fd.append("audio_mode", audio === "sfx" || audio === "both" ? "sfx" : "none");
+    fd.append("audio_mode", engine === "kaggle" && (audio === "sfx" || audio === "both") ? "sfx" : "none");
     fd.append("sfx_prompt", sfxPrompt);
     if (wantSpeech) {
       fd.append("speech_text", speech);
@@ -208,6 +212,7 @@ export default function Home() {
     setDuration(j.duration);
     setQuality(j.quality);
     setSeed(String(j.seed));
+    setEngine(j.engine ?? "kaggle");
     const sp = !!j.speech_text, fx = j.audio_mode === "sfx";
     setAudio(sp && fx ? "both" : sp ? "speech" : fx ? "sfx" : "none");
     setSpeech(j.speech_text ?? "");
@@ -302,6 +307,21 @@ export default function Home() {
 
       <div className="layout">
         <form className="panel" onSubmit={submit}>
+          <label className="lbl">생성 엔진</label>
+          <Segmented
+            value={engine}
+            options={["kaggle", "local"]}
+            onChange={(v) => setEngine(v as "kaggle" | "local")}
+            label={(v) => (v === "kaggle" ? "Kaggle GPU" : "맥 로컬")}
+          />
+          <p className="hint">
+            {engine === "kaggle"
+              ? "고품질 · 이미지 시작 · 오디오 가능 · GPU 대기가 있을 수 있어요"
+              : status?.local?.available
+                ? "대기 없음 · 텍스트 → 영상만 · 3스텝 압축 모델이라 품질은 조금 낮아요"
+                : `맥 로컬 사용 불가: ${status?.local?.reason ?? "확인 중"}`}
+          </p>
+
           <label className="lbl">프롬프트</label>
           <textarea
             value={prompt}
@@ -311,6 +331,7 @@ export default function Home() {
           />
           <p className="hint">영어 프롬프트가 더 정확해요.</p>
 
+          {engine === "kaggle" && (<>
           <label className="lbl">시작 이미지 (선택)</label>
           <div
             className={`drop ${preview ? "has" : ""}`}
@@ -335,6 +356,7 @@ export default function Home() {
               이미지 제거
             </button>
           )}
+          </>)}
 
           <label className="lbl">카메라 무빙</label>
           <div className="presets">
@@ -385,6 +407,7 @@ export default function Home() {
               </div>
             </div>
           )}
+          {engine === "kaggle" && (<>
           <label className="lbl">오디오</label>
           <Segmented
             value={audio}
@@ -428,12 +451,13 @@ export default function Home() {
               />
             </>
           )}
+          </>)}
 
           {resolution === "720p" && (
             <p className="hint warn">720p·5초는 T4에서 오래 걸려요. 먼저 480p로 테스트하세요.</p>
           )}
 
-          <button className="go" disabled={busy}>
+          <button className="go" disabled={busy || (engine === "local" && !status?.local?.available)}>
             {busy ? "추가 중…" : "생성하기"}
           </button>
           {msg && <p className="hint">{msg}</p>}
@@ -473,6 +497,7 @@ export default function Home() {
                   {j.audio_mode === "sfx" && <span>효과음</span>}
                   {j.preset !== "none" && <span>{opts?.camera_presets.find((p) => p.id === j.preset)?.name}</span>}
                   {j.has_image && <span>I2V</span>}
+                  {j.engine === "local" && <span>맥 로컬</span>}
                   {j.gen_seconds ? <span>{Math.round(j.gen_seconds)}s</span> : null}
                 </p>
                 {j.warning && (
@@ -493,6 +518,9 @@ export default function Home() {
                   {j.status === "failed" && <button onClick={() => act(j.id, "retry")}>재시도</button>}
                   {!["submitted", "running"].includes(j.status) && (
                     <button className="del" onClick={() => act(j.id, "delete")}>삭제</button>
+                  )}
+                  {j.engine === "local" && j.status === "running" && (
+                    <button className="del" onClick={() => act(j.id, "delete")}>중단</button>
                   )}
                 </div>
               </div>

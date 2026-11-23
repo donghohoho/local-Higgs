@@ -10,3 +10,4 @@ frontend/tsconfig.tsbuildinfo
 .DS_Store
 kaggle.json
 access_token
+local/

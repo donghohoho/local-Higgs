@@ -63,7 +63,7 @@ def _speech(job):
 
 
 def _start_batch():
-    queued = db.jobs_by_status("queued", limit=config.MAX_BATCH)
+    queued = db.jobs_by_status("queued", limit=config.MAX_BATCH, engine="kaggle")
     if not queued:
         return
     # wait a little so several clicks end up in one GPU session

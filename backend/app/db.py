@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     sfx_prompt TEXT,
     speech_text TEXT,
     voice TEXT,                    -- female | male | clone
-    voice_ref_path TEXT
+    voice_ref_path TEXT,
+    engine TEXT NOT NULL DEFAULT 'kaggle'      -- kaggle | local
 );
 CREATE TABLE IF NOT EXISTS batches (
     id TEXT PRIMARY KEY,
@@ -51,6 +52,7 @@ MIGRATIONS = [
     ("speech_text", "TEXT"),
     ("voice", "TEXT"),
     ("voice_ref_path", "TEXT"),
+    ("engine", "TEXT NOT NULL DEFAULT 'kaggle'"),
 ]
 
 
@@ -103,11 +105,17 @@ def list_jobs(limit=200):
     return [dict(r) for r in rows]
 
 
-def jobs_by_status(status, limit=100):
+def jobs_by_status(status, limit=100, engine=None):
     with _lock, _conn() as c:
-        rows = c.execute(
-            "SELECT * FROM jobs WHERE status=? ORDER BY created_at ASC LIMIT ?", (status, limit)
-        ).fetchall()
+        if engine:
+            rows = c.execute(
+                "SELECT * FROM jobs WHERE status=? AND engine=? ORDER BY created_at ASC LIMIT ?",
+                (status, engine, limit),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM jobs WHERE status=? ORDER BY created_at ASC LIMIT ?", (status, limit)
+            ).fetchall()
     return [dict(r) for r in rows]
 
 

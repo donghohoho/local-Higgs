@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, media, scheduler
+from . import config, db, local_engine, media, scheduler
 from .presets import DURATIONS, QUALITY_STEPS, SIZES, build_prompt, public_options
 from .progress import tracker
 
@@ -14,6 +14,7 @@ from .progress import tracker
 async def lifespan(app):
     db.init()
     scheduler.start()
+    local_engine.start()
     yield
 
 
@@ -47,6 +48,7 @@ def status():
         "active_batch": b,
         "batch_detail": scheduler.state["batch_detail"],
         "queued": len(db.jobs_by_status("queued")),
+        "local": local_engine.status(),
         "last_error": scheduler.state["last_error"],
     }
 
@@ -79,12 +81,16 @@ def cache_build():
 def jobs():
     rows = db.list_jobs()
     prog = {}
-    for bid in {j["batch_id"] for j in rows if j["status"] in ("submitted", "running")}:
+    for bid in {j["batch_id"] for j in rows if j["status"] in ("submitted", "running") and j["engine"] == "kaggle"}:
         prog.update(tracker.progress(bid, db.jobs_in_batch(bid)))
+    for j in rows:
+        if j["engine"] == "local" and j["status"] in ("queued", "running"):
+            prog[j["id"]] = local_engine.progress(j)
     out = []
     for j in rows:
         pj = _public(j)
-        pj["progress"] = prog.get(j["id"]) if j["status"] in ("submitted", "running") else None
+        active = j["status"] in ("submitted", "running") or (j["engine"] == "local" and j["status"] == "queued")
+        pj["progress"] = prog.get(j["id"]) if active else None
         out.append(pj)
     return out
 
@@ -99,6 +105,7 @@ async def create_job(
     quality: str = Form("standard"),
     seed: int = Form(-1),
     count: int = Form(1),
+    engine: str = Form("kaggle"),
     audio_mode: str = Form("none"),
     sfx_prompt: str = Form(""),
     speech_text: str = Form(""),
@@ -113,6 +120,14 @@ async def create_job(
     if duration not in DURATIONS or quality not in QUALITY_STEPS:
         raise HTTPException(400, "잘못된 길이/품질")
     count = max(1, min(count, config.MAX_BATCH))
+    if engine not in ("kaggle", "local"):
+        raise HTTPException(400, "잘못된 엔진")
+    if engine == "local":
+        st = local_engine.status()
+        if not st["available"]:
+            raise HTTPException(400, f"맥 로컬을 쓸 수 없어요: {st['reason']}")
+        if (image is not None and image.filename) or speech_text.strip() or audio_mode != "none":
+            raise HTTPException(400, "맥 로컬은 텍스트 → 영상만 돼요. 이미지·오디오는 Kaggle을 고르세요.")
 
     image_path = None
     if image is not None and image.filename:
@@ -189,9 +204,11 @@ async def create_job(
             "speech_text": speech_text or None,
             "voice": voice if speech_text else None,
             "voice_ref_path": voice_ref_path,
+            "engine": engine,
         })
         created.append(_public(job))
     scheduler.wake()
+    local_engine.wake()
     return created
 
 
@@ -204,6 +221,7 @@ def retry(job_id: str):
         raise HTTPException(400, "실패한 작업만 재시도할 수 있어요")
     db.update_job(job_id, status="queued", batch_id=None, error=None)
     scheduler.wake()
+    local_engine.wake()
     return {"ok": True}
 
 
@@ -213,7 +231,9 @@ def delete(job_id: str):
     if not j:
         raise HTTPException(404)
     if j["status"] in ("submitted", "running"):
-        raise HTTPException(400, "Kaggle에서 실행 중인 작업은 삭제할 수 없어요")
+        if j["engine"] == "local" and local_engine.cancel():
+            return {"ok": True, "cancelled": True}  # the loop marks it failed
+        raise HTTPException(400, "실행 중인 작업은 삭제할 수 없어요")
     if j.get("output_file"):
         (config.OUTPUT_DIR / j["output_file"]).unlink(missing_ok=True)
     db.delete_job(job_id)
