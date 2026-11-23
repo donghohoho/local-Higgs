@@ -21,6 +21,28 @@ TOKEN_FILE = Path("~/.kaggle/access_token").expanduser()
 LEGACY_FILE = Path("~/.kaggle/kaggle.json").expanduser()
 
 
+def explain_http_error(e):
+    """Kaggle puts the real reason in the response body; show it."""
+    body = ""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            data = resp.json()
+            body = data.get("message") or data.get("error") or str(data)
+        except Exception:
+            body = (resp.text or "")[:500]
+    text = f"{e}" + (f"\nKaggle 응답: {body}" if body else "")
+    low = text.lower()
+    if "concurrent" in low or "running" in low or "session" in low:
+        text += ("\n→ 같은 계정에서 GPU 노트북이 이미 돌고 있어요. kaggle.com/code 에서 "
+                 "실행 중인 local-higgs 노트북을 Stop session 하거나, 다른 컴퓨터 작업이 끝난 뒤 재시도하세요.")
+    elif "phone" in low or "verif" in low:
+        text += "\n→ Kaggle 휴대폰 인증이 필요해요: kaggle.com → Settings → Phone Verification"
+    elif "quota" in low:
+        text += "\n→ 이번 주 GPU 시간을 다 썼어요. Kaggle Settings에서 남은 시간을 확인하세요."
+    return text
+
+
 def token_present():
     return bool(os.environ.get("KAGGLE_API_TOKEN")) or TOKEN_FILE.exists() or LEGACY_FILE.exists()
 
@@ -94,7 +116,10 @@ class KaggleRunner:
             meta["machine_shape"] = "NvidiaTeslaT4"
         (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         kw = {"timeout": str(timeout)} if timeout else {}
-        resp = self.api().kernels_push(str(folder), **kw)
+        try:
+            resp = self.api().kernels_push(str(folder), **kw)
+        except Exception as e:
+            raise RuntimeError(explain_http_error(e)) from e
         err = getattr(resp, "error", None)
         if err:
             raise RuntimeError(f"Kaggle push failed: {err}")
