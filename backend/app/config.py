@@ -24,6 +24,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 BATCH_DIR = DATA_DIR / "batches"
 DB_PATH = DATA_DIR / "local_higgs.db"
 WORKER_TEMPLATE = ROOT / "kaggle" / "worker.py"
+CACHE_TEMPLATE = ROOT / "kaggle" / "cache_builder.py"
 
 for d in (OUTPUT_DIR, UPLOAD_DIR, BATCH_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -31,6 +32,7 @@ for d in (OUTPUT_DIR, UPLOAD_DIR, BATCH_DIR):
 # DRY_RUN=1 -> no Kaggle; fake videos via ffmpeg (UI testing)
 DRY_RUN = os.environ.get("LH_DRY_RUN", "0") == "1"
 KERNEL_SLUG = os.environ.get("LH_KERNEL_SLUG", "local-higgs-worker")
+CACHE_PREFIX = os.environ.get("LH_CACHE_PREFIX", "local-higgs-cache")
 MODEL_ID = os.environ.get("LH_MODEL_ID", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
 POLL_SECONDS = int(os.environ.get("LH_POLL_SECONDS", "30"))
 MAX_BATCH = int(os.environ.get("LH_MAX_BATCH", "4"))

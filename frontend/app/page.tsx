@@ -32,6 +32,10 @@ type Job = {
   voice: string | null;
   sfx_prompt: string | null;
 };
+type CachePart = { id: string; label: string; gb: number; status: string; message: string };
+const CACHE_LABEL: Record<string, string> = {
+  none: "저장 안 됨", running: "저장 중", done: "저장됨", failed: "실패", unknown: "확인 중",
+};
 type AudioChoice = "none" | "sfx" | "speech" | "both";
 const AUDIO_LABEL: Record<AudioChoice, string> = { none: "없음", sfx: "효과음", speech: "대사", both: "대사+효과음" };
 const VOICE_LABEL: Record<string, string> = { female: "여성", male: "남성", clone: "내 목소리" };
@@ -80,6 +84,9 @@ export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [apiDown, setApiDown] = useState(false);
+  const [cache, setCache] = useState<CachePart[]>([]);
+  const [cacheOpen, setCacheOpen] = useState(false);
+  const [cacheMsg, setCacheMsg] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [preset, setPreset] = useState("none");
@@ -118,8 +125,24 @@ export default function Home() {
     fetch("/api/options").then((r) => r.json()).then(setOpts).catch(() => setApiDown(true));
     refresh();
     const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    const loadCache = () =>
+      fetch("/api/cache").then((r) => r.json()).then((d) => setCache(d.parts ?? [])).catch(() => {});
+    loadCache();
+    const c = setInterval(loadCache, 30000);
+    return () => {
+      clearInterval(t);
+      clearInterval(c);
+    };
   }, [refresh]);
+
+  async function buildCache() {
+    setCacheMsg("Kaggle에 저장 노트북 보내는 중…");
+    const r = await fetch("/api/cache/build", { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) return setCacheMsg(d.detail ?? "실패");
+    setCacheMsg(d.started.length ? `${d.started.length}개 저장 시작 (10~20분, GPU 시간 안 씀)` : "이미 저장됐거나 저장 중이에요");
+    fetch("/api/cache").then((x) => x.json()).then((x) => setCache(x.parts ?? []));
+  }
 
   function pickImage(f: File | null) {
     setImage(f);
@@ -214,8 +237,32 @@ export default function Home() {
             <span className="pill">GPU 작업 중 · {status.batch_detail ?? status.active_batch.status}</span>
           )}
           {!!status?.queued && <span className="pill">대기 {status.queued}</span>}
+          {cache.length > 0 && (
+            <button className="pill btn" onClick={() => setCacheOpen((v) => !v)}>
+              모델 저장 {cache.filter((c) => c.status === "done").length}/{cache.length}
+            </button>
+          )}
         </div>
       </header>
+
+      {cacheOpen && (
+        <div className="cachebox">
+          <p>
+            모델을 Kaggle에 한 번 저장해두면, 생성할 때마다 받던 다운로드(약 24GB)를 건너뛰어요.
+            저장은 GPU 시간을 쓰지 않아요.
+          </p>
+          <ul>
+            {cache.map((c) => (
+              <li key={c.id}>
+                <span>{c.label} <small>약 {c.gb}GB</small></span>
+                <b className={`cs ${c.status}`}>{CACHE_LABEL[c.status] ?? c.status}</b>
+              </li>
+            ))}
+          </ul>
+          <button className="go small" onClick={buildCache}>Kaggle에 모델 저장하기</button>
+          {cacheMsg && <p className="hint">{cacheMsg}</p>}
+        </div>
+      )}
 
       {k && !k.ok && !status?.dry_run && (
         <div className="banner">

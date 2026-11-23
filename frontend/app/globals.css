@@ -91,3 +91,17 @@ details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; o
 .actions .del { color: var(--bad); }
 details.warn { color: #ffd27a; }
 .input.file { margin-top: 8px; padding: 8px; font-size: 12px; }
+.pill.btn { background: none; color: var(--text); cursor: pointer; font-size: 13px; }
+.pill.btn:hover { border-color: var(--accent); }
+.cachebox { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 14px; font-size: 13px; }
+.cachebox p { margin: 0 0 10px; color: var(--muted); }
+.cachebox ul { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.cachebox li { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.cachebox small { color: var(--muted); margin-left: 6px; }
+.cs { font-weight: 600; font-size: 12px; }
+.cs.done { color: var(--accent); }
+.cs.running, .cs.unknown { color: #ffd27a; }
+.cs.failed { color: var(--bad); }
+.cs.none { color: var(--muted); }
+.go.small { width: auto; padding: 8px 14px; font-size: 13px; margin-top: 0; }

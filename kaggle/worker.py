@@ -29,6 +29,10 @@ import traceback
 
 JOBS_PAYLOAD = "__JOBS_PAYLOAD__"
 
+# Hugging Face cache on local disk; saved model parts get linked in (attach_caches)
+os.environ.setdefault("HF_HOME", "/tmp/hf")
+MMAUDIO_CACHE = None
+
 WORK = "/kaggle/working"
 OUT_DIR = os.path.join(WORK, "outputs")
 TMP = "/tmp/lh"  # not saved as Kaggle output
@@ -89,6 +93,49 @@ def install_deps(need_speech):
             os.symlink(FFMPEG, "/usr/local/bin/ffmpeg")  # LatentSync calls plain `ffmpeg`
         except OSError:
             pass
+
+
+def _link_tree(src, dst):
+    """Mirror src into dst with symlinks. Small files under refs/ are copied so
+    the HF hub can update them (the Kaggle input folder is read-only)."""
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        target = os.path.join(dst, rel)
+        os.makedirs(target, exist_ok=True)
+        for f in files:
+            s_path, d_path = os.path.join(root, f), os.path.join(target, f)
+            if os.path.lexists(d_path):
+                continue
+            if f"{os.sep}refs" in root or rel.startswith("refs"):
+                shutil.copy(s_path, d_path)
+            elif os.path.islink(s_path):
+                # HF snapshot links are relative (../../blobs/x): keep them relative
+                os.symlink(os.readlink(s_path), d_path)
+            else:
+                os.symlink(s_path, d_path)
+
+
+def attach_caches(root="/kaggle/input"):
+    """Find saved model parts (LH_CACHE.json) and link them into HF_HOME."""
+    global MMAUDIO_CACHE
+    found = []
+    for dirpath, dirs, files in os.walk(root):
+        if dirpath.count(os.sep) - root.count(os.sep) > 4:
+            dirs[:] = []
+            continue
+        if "LH_CACHE.json" not in files:
+            continue
+        dirs[:] = []
+        try:
+            part = json.load(open(os.path.join(dirpath, "LH_CACHE.json")))["part"]
+        except Exception:
+            continue
+        if os.path.isdir(os.path.join(dirpath, "hf")):
+            _link_tree(os.path.join(dirpath, "hf"), os.environ["HF_HOME"])
+        if os.path.isdir(os.path.join(dirpath, "mmaudio")):
+            MMAUDIO_CACHE = os.path.join(dirpath, "mmaudio")
+        found.append(part)
+    return found
 
 
 def load_batch():
@@ -258,8 +305,11 @@ def setup_latentsync():
             except RuntimeError as e:
                 log(f"pip {spec} failed, trying fallback: {str(e)[-200:]}")
     ck = os.path.join(repo, "checkpoints")
-    hf_hub_download(LATENTSYNC_HF, "latentsync_unet.pt", local_dir=ck)
-    hf_hub_download(LATENTSYNC_HF, "whisper/tiny.pt", local_dir=ck)
+    for name in ("latentsync_unet.pt", "whisper/tiny.pt"):
+        dst = os.path.join(ck, name)
+        if not os.path.exists(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.symlink(hf_hub_download(LATENTSYNC_HF, name), dst)  # cached part or download
     return repo, py
 
 
@@ -325,6 +375,8 @@ def setup_mmaudio():
     if not os.path.isdir(env):
         sh([sys.executable, "-m", "venv", "--system-site-packages", env])
     py = os.path.join(env, "bin", "python")
+    if MMAUDIO_CACHE:  # saved weights: skip the download in cfg.download_if_needed()
+        _link_tree(MMAUDIO_CACHE, repo)
     # torchcodec / gradio / tensorboard are not needed for inference
     pip("--no-deps", "-e", repo, python=py)
     pip("torchdiffeq>=0.2.5", "open_clip_torch>=2.29.0", "av>=14.0.1", "timm>=1.0.12", "einops",
@@ -377,6 +429,11 @@ def mix_sfx(video_with_audio, sfx, out):
 def main():
     batch_id, model_id, jobs = load_batch()
     emit("setup", batch=batch_id)
+    try:
+        parts = attach_caches()
+        log(f"saved model parts: {parts or 'none (downloading)'}")
+    except Exception:
+        log("cache attach failed, downloading instead:\n" + traceback.format_exc()[-800:])
     results = {j["id"]: {"status": "pending"} for j in jobs}
     warnings = {j["id"]: [] for j in jobs}
     write_result(batch_id, results)

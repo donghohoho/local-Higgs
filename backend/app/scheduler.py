@@ -14,9 +14,11 @@ from pathlib import Path
 from . import config, db
 from .presets import FPS, NEGATIVE_PROMPT
 from .progress import tracker
+from .cache import Cache
 from .runner import make_runner, move_output
 
 runner = make_runner()
+cache = Cache(runner)
 state = {"last_error": None, "kaggle": None, "batch_ref": None, "batch_detail": None}
 _wake = threading.Event()
 
@@ -68,7 +70,8 @@ def _start_batch():
     for j in queued:
         db.update_job(j["id"], status="submitted", batch_id=batch_id, error=None)
     try:
-        ref = runner.submit(batch_id, [_payload(j) for j in queued])
+        sources = cache.ready_sources()
+        ref = runner.submit(batch_id, [_payload(j) for j in queued], kernel_sources=sources)
     except BaseException as e:
         msg = f"제출 실패: {e}"
         db.update_batch(batch_id, "failed", msg)
@@ -78,11 +81,11 @@ def _start_batch():
         return
     db.update_batch(batch_id, "submitted", ref)
     state["batch_ref"] = ref
-    _track(batch_id, ref, time.time())
+    _track(batch_id, ref, time.time(), cached=cache.video_ready())
 
 
-def _track(batch_id, ref, submit_ts):
-    tracker.start(batch_id, db.jobs_in_batch(batch_id), submit_ts, lambda: runner.stream_events(ref))
+def _track(batch_id, ref, submit_ts, cached=False):
+    tracker.start(batch_id, db.jobs_in_batch(batch_id), submit_ts, lambda: runner.stream_events(ref), cached=cached)
 
 
 def _check_batch(batch):

@@ -51,6 +51,22 @@ def status():
     }
 
 
+@app.get("/api/cache")
+def cache_status():
+    return {"parts": scheduler.cache.public(), "video_ready": scheduler.cache.video_ready()}
+
+
+@app.post("/api/cache/build")
+def cache_build():
+    if not scheduler.state["kaggle"] or not scheduler.state["kaggle"].get("ok"):
+        raise HTTPException(400, "Kaggle에 먼저 연결해주세요")
+    try:
+        started = scheduler.cache.build()
+    except Exception as e:
+        raise HTTPException(500, f"저장 시작 실패: {e}")
+    return {"started": started}
+
+
 @app.get("/api/jobs")
 def jobs():
     rows = db.list_jobs()

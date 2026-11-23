@@ -21,6 +21,7 @@ STATS_PATH = config.DATA_DIR / ("stats-dry.json" if config.DRY_RUN else "stats.j
 # first guesses for a Kaggle T4; replaced by real measurements after one run
 DEFAULT_STATS = {
     "setup_s": 420.0,            # submit -> ready (queue, pip, model download)
+    "setup_cached_s": 200.0,     # same, with the video model saved on Kaggle
     "load_s": 90.0,              # loading the second pipeline (t2v -> i2v)
     "step_s_per_unit": 0.45,     # seconds per denoise step per unit
     "decode_s_per_unit": 1.2,
@@ -68,9 +69,10 @@ class Tracker:
             pass
 
     # ---------- lifecycle ----------
-    def start(self, batch_id, jobs, submit_ts, stream_factory):
+    def start(self, batch_id, jobs, submit_ts, stream_factory, cached=False):
         with self.lock:
             self.batches[batch_id] = {
+                "setup_key": "setup_cached_s" if cached else "setup_s",
                 "submit_ts": submit_ts,
                 "units": {j["id"]: unit(j) for j in jobs},
                 "n_speech": sum(needs(j)["speech"] for j in jobs),
@@ -125,7 +127,7 @@ class Tracker:
                     sp = b["phase"].get("speech")
                     if sp and b["n_speech"]:
                         self._learn("speech_s_per_job", (ts - sp) / b["n_speech"])
-                    self._learn("setup_s", (sp or ts) - b["submit_ts"])
+                    self._learn(b["setup_key"], (sp or ts) - b["submit_ts"])
                 elif b["load_kind"] != ev.get("kind"):
                     b["load_ts"] = ts
                 b["load_kind"] = ev.get("kind")
@@ -195,7 +197,7 @@ class Tracker:
             # setup + speech
             cursor = 0.0
             if b["first_load_ts"] is None:
-                pre = s["setup_s"] + b["n_speech"] * s["speech_s_per_job"]
+                pre = s[b["setup_key"]] + b["n_speech"] * s["speech_s_per_job"]
                 cursor = max(pre - (now - b["submit_ts"]), 20)
                 in_speech = "speech" in b["phase"]
                 for j in ordered:

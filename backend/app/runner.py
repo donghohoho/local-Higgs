@@ -70,44 +70,66 @@ class KaggleRunner:
         except Exception as e:
             return {"ok": False, "error": str(e) or e.__class__.__name__}
 
-    def submit(self, batch_id, jobs):
-        api = self.api()
+    def push(self, folder: Path, slug, code, gpu, kernel_sources=(), timeout=None):
+        """Push a script kernel and start it. Returns 'user/slug/version'."""
         user = self.username()
-        folder = config.BATCH_DIR / batch_id / "kernel"
         folder.mkdir(parents=True, exist_ok=True)
+        (folder / "script.py").write_text(code)
+        meta = {
+            "id": f"{user}/{slug}",
+            "title": slug,
+            "code_file": "script.py",
+            "language": "python",
+            "kernel_type": "script",
+            "is_private": True,
+            "enable_gpu": gpu,
+            "enable_tpu": False,
+            "enable_internet": True,
+            "dataset_sources": [],
+            "competition_sources": [],
+            "kernel_sources": list(kernel_sources),
+            "model_sources": [],
+        }
+        if gpu:
+            meta["machine_shape"] = "NvidiaTeslaT4"
+        (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
+        kw = {"timeout": str(timeout)} if timeout else {}
+        resp = self.api().kernels_push(str(folder), **kw)
+        err = getattr(resp, "error", None)
+        if err:
+            raise RuntimeError(f"Kaggle push failed: {err}")
+        version = getattr(resp, "version_number", None)
+        ref = f"{user}/{slug}"
+        return f"{ref}/{version}" if version else ref
 
+    def submit(self, batch_id, jobs, kernel_sources=()):
         payload = base64.b64encode(
             json.dumps({"batch_id": batch_id, "model": config.MODEL_ID, "jobs": jobs}).encode()
         ).decode()
         code = config.WORKER_TEMPLATE.read_text().replace(
             'JOBS_PAYLOAD = "__JOBS_PAYLOAD__"', f'JOBS_PAYLOAD = "{payload}"', 1
         )
-        (folder / "worker.py").write_text(code)
-        meta = {
-            "id": f"{user}/{config.KERNEL_SLUG}",
-            "title": config.KERNEL_SLUG,
-            "code_file": "worker.py",
-            "language": "python",
-            "kernel_type": "script",
-            "is_private": True,
-            "enable_gpu": True,
-            "enable_tpu": False,
-            "enable_internet": True,
-            "machine_shape": "NvidiaTeslaT4",
-            "dataset_sources": [],
-            "competition_sources": [],
-            "kernel_sources": [],
-            "model_sources": [],
-        }
-        (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
+        return self.push(config.BATCH_DIR / batch_id / "kernel", config.KERNEL_SLUG, code, gpu=True,
+                         kernel_sources=kernel_sources, timeout=config.SESSION_TIMEOUT)
 
-        resp = api.kernels_push(str(folder), timeout=str(config.SESSION_TIMEOUT))
-        err = getattr(resp, "error", None)
-        if err:
-            raise RuntimeError(f"Kaggle push failed: {err}")
-        version = getattr(resp, "version_number", None)
-        ref = f"{user}/{config.KERNEL_SLUG}"
-        return f"{ref}/{version}" if version else ref
+    def build_cache(self, part):
+        code = (config.CACHE_TEMPLATE.read_text()
+                .replace('PART = "__PART__"', f'PART = "{part}"', 1)
+                .replace('WAN = "__MODEL__"', f'WAN = "{config.MODEL_ID}"', 1))
+        return self.push(config.DATA_DIR / "cache_kernels" / part, f"{config.CACHE_PREFIX}-{part}", code, gpu=False)
+
+    def kernel_ref(self, slug):
+        return f"{self.username()}/{slug}"
+
+    def cache_poll(self, part):
+        """State of a cache notebook: none | running | done | failed."""
+        try:
+            return self.poll(self.kernel_ref(f"{config.CACHE_PREFIX}-{part}"))
+        except Exception as e:
+            text = str(e).lower()
+            if "404" in text or "not found" in text:
+                return "none", ""
+            return "unknown", str(e)[-300:]
 
     def poll(self, ref):
         resp = self.api().kernels_status(ref)
@@ -163,7 +185,21 @@ class DryRunRunner:
     def check(self):
         return {"ok": True, "user": "dry-run"}
 
-    def submit(self, batch_id, jobs):
+    def build_cache(self, part):
+        self._cache = getattr(self, "_cache", {})
+        self._cache[part] = time.time()
+        return part
+
+    def kernel_ref(self, slug):
+        return slug
+
+    def cache_poll(self, part):
+        t = getattr(self, "_cache", {}).get(part)
+        if t is None:
+            return "none", ""
+        return ("done", "") if time.time() - t > 8 else ("running", "dry-run")
+
+    def submit(self, batch_id, jobs, kernel_sources=()):
         """Same event order as kaggle/worker.py."""
         t = time.time()
         ev = []
